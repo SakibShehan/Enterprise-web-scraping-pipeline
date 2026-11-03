@@ -1,0 +1,16 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+eggs/
+logs/
+dbs/
+build/
+*.egg-info/
+books.db
+books.json
+books.csv
+books.xml
+.env
+.idea/
+.vscode/
