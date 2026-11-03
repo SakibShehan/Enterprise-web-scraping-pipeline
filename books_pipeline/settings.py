@@ -4,6 +4,9 @@ BOT_NAME = "books_pipeline"
 SPIDER_MODULES = ["books_pipeline.spiders"]
 NEWSPIDER_MODULE = "books_pipeline.spiders"
 
+ITEM_PIPELINES = {
+    "books_pipeline.pipelines.BooksPipeline": 300,
+}
 
 USER_AGENT = (
     "books_pipeline/1.0 (Enterprise Web Scraping Pipeline; educational project)"
