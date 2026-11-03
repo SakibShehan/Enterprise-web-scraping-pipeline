@@ -13,6 +13,7 @@ class BooksSpider(scrapy.Spider):
     start_url = "https://books.toscrape.com/index.html"
 
     CATEGORY_SAMPLE_SIZE = 7
+    BOOKS_PER_CATEGORY = 5
     CATEGORY_LINK_SELECTOR = "div.side_categories ul.nav-list > li > ul > li > a"
     BOOK_LINK_SELECTOR = "article.product_pod h3 a::attr(href)"
     NEXT_PAGE_SELECTOR = "li.next a::attr(href)"
@@ -92,7 +93,26 @@ class BooksSpider(scrapy.Spider):
             len(book_urls),
             pages,
         )
-        # Commit 6 will randomly pick up to 5 books from book_urls here
+
+        # Last page reached, so sample books and request their detail pages
+        selected_urls = self.select_books(book_urls)
+        self.logger.info(
+            "Category %s: selected %d of %d books",
+            category,
+            len(selected_urls),
+            len(book_urls),
+        )
+        for url in selected_urls:
+            yield scrapy.Request(
+                url,
+                callback=self.parse_book,
+                errback=self.handle_error,
+                cb_kwargs={"category": category},
+            )
+
+    def parse_book(self, response: Response, category: str) -> None:
+        # Placeholder until commit 7 extracts the book fields
+        self.logger.info("Fetched book page [%s]: %s", category, response.url)
 
     def extract_categories(self, response: Response) -> List[Dict[str, str]]:
         # Extract category names and absolute URLs from the sidebar
@@ -117,6 +137,12 @@ class BooksSpider(scrapy.Spider):
                 len(categories),
             )
         return self.rng.sample(categories, sample_size)
+
+    def select_books(self, book_urls: List[str]) -> List[str]:
+        # Pick up to BOOKS_PER_CATEGORY distinct books, or all if fewer exist
+        unique_urls = list(dict.fromkeys(book_urls))
+        sample_size = min(self.BOOKS_PER_CATEGORY, len(unique_urls))
+        return self.rng.sample(unique_urls, sample_size)
 
     def handle_error(self, failure) -> None:
         # Log a failed request
