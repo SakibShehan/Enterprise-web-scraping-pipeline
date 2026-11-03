@@ -1,0 +1,30 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+eggs/
+
+# Scrapy / Scrapyd runtime
+.scrapy/
+dbs/
+eggs/
+logs/
+twistd.pid
+
+# Generated crawl outputs
+books.db
+books.json
+books.csv
+books.xml
+
+# Environment and editor files
+.env
+.idea/
+.vscode/
+.DS_Store
