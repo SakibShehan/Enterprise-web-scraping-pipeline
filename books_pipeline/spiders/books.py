@@ -4,6 +4,8 @@ from typing import Dict, List, Optional
 import scrapy
 from scrapy.http import Response
 
+from books_pipeline.items import BooksPipelineItem
+
 
 class BooksSpider(scrapy.Spider):
     # Crawl Books to Scrape starting from its homepage
@@ -17,6 +19,10 @@ class BooksSpider(scrapy.Spider):
     CATEGORY_LINK_SELECTOR = "div.side_categories ul.nav-list > li > ul > li > a"
     BOOK_LINK_SELECTOR = "article.product_pod h3 a::attr(href)"
     NEXT_PAGE_SELECTOR = "li.next a::attr(href)"
+    TITLE_SELECTOR = "div.product_main h1::text"
+    PRICE_SELECTOR = "div.product_main p.price_color::text"
+    AVAILABILITY_SELECTOR = "div.product_main p.availability::text"
+    IMAGE_SELECTOR = "div.item.active img::attr(src)"
 
     def __init__(self, seed: Optional[str] = None, *args, **kwargs):
         # Optional seed makes random selection repeatable
@@ -110,9 +116,27 @@ class BooksSpider(scrapy.Spider):
                 cb_kwargs={"category": category},
             )
 
-    def parse_book(self, response: Response, category: str) -> None:
-        # Placeholder until commit 7 extracts the book fields
-        self.logger.info("Fetched book page [%s]: %s", category, response.url)
+    def parse_book(self, response: Response, category: str):
+        # Extract the six fields from a book detail page
+        title = response.css(self.TITLE_SELECTOR).get()
+        if not title:
+            self.logger.error("No title found on %s; skipping book.", response.url)
+            return
+
+        image_href = response.css(self.IMAGE_SELECTOR).get()
+
+        item = BooksPipelineItem()
+        item["title"] = title
+        item["price"] = response.css(self.PRICE_SELECTOR).get()
+        item["availability"] = " ".join(
+            response.css(self.AVAILABILITY_SELECTOR).getall()
+        )
+        item["product_url"] = response.url
+        item["image_url"] = response.urljoin(image_href) if image_href else None
+        item["category"] = category
+
+        self.logger.debug("Extracted book [%s]: %s", category, title)
+        yield item
 
     def extract_categories(self, response: Response) -> List[Dict[str, str]]:
         # Extract category names and absolute URLs from the sidebar
