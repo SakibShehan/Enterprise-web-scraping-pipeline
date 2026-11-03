@@ -6,7 +6,10 @@ NEWSPIDER_MODULE = "books_pipeline.spiders"
 
 ITEM_PIPELINES = {
     "books_pipeline.pipelines.BooksPipeline": 300,
+    "books_pipeline.pipelines.SQLitePipeline": 400,
 }
+
+SQLITE_DB_PATH = "books.db"
 
 USER_AGENT = (
     "books_pipeline/1.0 (Enterprise Web Scraping Pipeline; educational project)"
