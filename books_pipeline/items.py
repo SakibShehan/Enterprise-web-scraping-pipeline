@@ -2,7 +2,7 @@ import scrapy
 
 
 class BooksPipelineItem(scrapy.Item):
-    #Container for one scraped book record.
+    """One scraped book record shared by the spider, pipelines and feeds."""
 
     title = scrapy.Field()
     price = scrapy.Field()

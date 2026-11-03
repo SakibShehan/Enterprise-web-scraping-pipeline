@@ -1,14 +1,14 @@
-import random
 from typing import Dict, List, Optional
 
 import scrapy
 from scrapy.http import Response
 
-from books_pipeline.items import BooksPipelineItem
+from books_pipeline.parsers import BookDetailParser, BookListParser, CategoryParser
+from books_pipeline.sampler import RandomSampler
 
 
 class BooksSpider(scrapy.Spider):
-    # Crawl Books to Scrape starting from its homepage
+    """Crawl Books to Scrape and yield a random sample of books."""
 
     name = "books"
     allowed_domains = ["books.toscrape.com"]
@@ -16,33 +16,42 @@ class BooksSpider(scrapy.Spider):
 
     CATEGORY_SAMPLE_SIZE = 7
     BOOKS_PER_CATEGORY = 5
-    CATEGORY_LINK_SELECTOR = "div.side_categories ul.nav-list > li > ul > li > a"
-    BOOK_LINK_SELECTOR = "article.product_pod h3 a::attr(href)"
-    NEXT_PAGE_SELECTOR = "li.next a::attr(href)"
-    TITLE_SELECTOR = "div.product_main h1::text"
-    PRICE_SELECTOR = "div.product_main p.price_color::text"
-    AVAILABILITY_SELECTOR = "div.product_main p.availability::text"
-    IMAGE_SELECTOR = "div.item.active img::attr(src)"
 
-    def __init__(self, seed: Optional[str] = None, *args, **kwargs):
-        # Optional seed makes random selection repeatable
+    def __init__(
+        self,
+        seed: Optional[str] = None,
+        sampler: Optional[RandomSampler] = None,
+        category_parser: Optional[CategoryParser] = None,
+        book_list_parser: Optional[BookListParser] = None,
+        book_parser: Optional[BookDetailParser] = None,
+        *args,
+        **kwargs,
+    ):
+        """Set up the spider; collaborators can be injected for testing."""
         super().__init__(*args, **kwargs)
         self.seed = seed
-        self.rng = random.Random(seed)
-        self.selected_categories: List[Dict[str, str]] = []
+        self.sampler = sampler or RandomSampler(seed)
+        self.category_parser = category_parser or CategoryParser()
+        self.book_list_parser = book_list_parser or BookListParser()
+        self.book_parser = book_parser or BookDetailParser()
 
-    async def start(self):
-        # Send the first request to the homepage
-        self.logger.info("Starting crawl at %s", self.start_url)
-        yield scrapy.Request(
-            self.start_url,
-            callback=self.parse,
+    def make_request(self, url: str, callback, **cb_kwargs) -> scrapy.Request:
+        """Build a request that always logs failures."""
+        return scrapy.Request(
+            url,
+            callback=callback,
             errback=self.handle_error,
+            cb_kwargs=cb_kwargs,
         )
 
+    async def start(self):
+        """Send the first request to the homepage."""
+        self.logger.info("Starting crawl at %s", self.start_url)
+        yield self.make_request(self.start_url, self.parse)
+
     def parse(self, response: Response):
-        # Discover all categories, select a random sample, crawl each one
-        categories = self.extract_categories(response)
+        """Discover categories, select a random sample, crawl each one."""
+        categories = self.category_parser.parse(response)
 
         if not categories:
             self.logger.error(
@@ -51,45 +60,43 @@ class BooksSpider(scrapy.Spider):
             )
             return
 
-        self.selected_categories = self.select_categories(categories)
+        selected = self.select_categories(categories)
         self.logger.info(
             "Discovered %d categories; randomly selected %d",
             len(categories),
-            len(self.selected_categories),
+            len(selected),
         )
 
-        for category in self.selected_categories:
+        for category in selected:
             self.logger.info(
                 "Selected category: %s -> %s", category["name"], category["url"]
             )
-            yield scrapy.Request(
+            yield self.make_request(
                 category["url"],
-                callback=self.parse_category,
-                errback=self.handle_error,
-                cb_kwargs={"category": category["name"], "book_urls": [], "pages": 0},
+                self.parse_category,
+                category=category["name"],
+                book_urls=[],
+                pages=0,
             )
 
     def parse_category(
         self, response: Response, category: str, book_urls: List[str], pages: int
     ):
-        # Collect book URLs from this page, then follow the next page if any
+        """Collect book URLs across pages, then sample books on the last page."""
         pages += 1
-        page_urls = [
-            response.urljoin(href)
-            for href in response.css(self.BOOK_LINK_SELECTOR).getall()
-        ]
+        page_urls, next_url = self.book_list_parser.parse(response)
         book_urls = book_urls + page_urls
         self.logger.debug(
             "Category %s page %d: %d books", category, pages, len(page_urls)
         )
 
-        next_href = response.css(self.NEXT_PAGE_SELECTOR).get()
-        if next_href:
-            yield scrapy.Request(
-                response.urljoin(next_href),
-                callback=self.parse_category,
-                errback=self.handle_error,
-                cb_kwargs={"category": category, "book_urls": book_urls, "pages": pages},
+        if next_url:
+            yield self.make_request(
+                next_url,
+                self.parse_category,
+                category=category,
+                book_urls=book_urls,
+                pages=pages,
             )
             return
 
@@ -100,8 +107,7 @@ class BooksSpider(scrapy.Spider):
             pages,
         )
 
-        # Last page reached, so sample books and request their detail pages
-        selected_urls = self.select_books(book_urls)
+        selected_urls = self.sampler.sample(book_urls, self.BOOKS_PER_CATEGORY)
         self.logger.info(
             "Category %s: selected %d of %d books",
             category,
@@ -109,65 +115,28 @@ class BooksSpider(scrapy.Spider):
             len(book_urls),
         )
         for url in selected_urls:
-            yield scrapy.Request(
-                url,
-                callback=self.parse_book,
-                errback=self.handle_error,
-                cb_kwargs={"category": category},
-            )
+            yield self.make_request(url, self.parse_book, category=category)
 
     def parse_book(self, response: Response, category: str):
-        # Extract the six fields from a book detail page
-        title = response.css(self.TITLE_SELECTOR).get()
-        if not title:
-            self.logger.error("No title found on %s; skipping book.", response.url)
-            return
-
-        image_href = response.css(self.IMAGE_SELECTOR).get()
-
-        item = BooksPipelineItem()
-        item["title"] = title
-        item["price"] = response.css(self.PRICE_SELECTOR).get()
-        item["availability"] = " ".join(
-            response.css(self.AVAILABILITY_SELECTOR).getall()
-        )
-        item["product_url"] = response.url
-        item["image_url"] = response.urljoin(image_href) if image_href else None
-        item["category"] = category
-
-        self.logger.debug("Extracted book [%s]: %s", category, title)
-        yield item
-
-    def extract_categories(self, response: Response) -> List[Dict[str, str]]:
-        # Extract category names and absolute URLs from the sidebar
-        categories = []
-        for link in response.css(self.CATEGORY_LINK_SELECTOR):
-            name = " ".join(link.css("::text").get(default="").split())
-            href = link.attrib.get("href")
-            if not name or not href:
-                self.logger.warning("Skipping malformed category link: %s", link.get())
-                continue
-            categories.append({"name": name, "url": response.urljoin(href)})
-        return categories
+        """Yield the item extracted from a book detail page."""
+        item = self.book_parser.parse(response, category)
+        if item is not None:
+            self.logger.debug("Extracted book [%s]: %s", category, item["title"])
+            yield item
 
     def select_categories(
         self, categories: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
-        # Pick distinct random categories, or all if fewer than the sample size
-        sample_size = min(self.CATEGORY_SAMPLE_SIZE, len(categories))
-        if sample_size < self.CATEGORY_SAMPLE_SIZE:
+        """Randomly pick distinct categories, or all if fewer exist."""
+        if len(categories) < self.CATEGORY_SAMPLE_SIZE:
             self.logger.warning(
                 "Only %d categories available; selecting all of them.",
                 len(categories),
             )
-        return self.rng.sample(categories, sample_size)
-
-    def select_books(self, book_urls: List[str]) -> List[str]:
-        # Pick up to BOOKS_PER_CATEGORY distinct books, or all if fewer exist
-        unique_urls = list(dict.fromkeys(book_urls))
-        sample_size = min(self.BOOKS_PER_CATEGORY, len(unique_urls))
-        return self.rng.sample(unique_urls, sample_size)
+        return self.sampler.sample(
+            categories, self.CATEGORY_SAMPLE_SIZE, key=lambda c: c["url"]
+        )
 
     def handle_error(self, failure) -> None:
-        # Log a failed request
+        """Log a failed request."""
         self.logger.error("Request failed: %s", repr(failure))
