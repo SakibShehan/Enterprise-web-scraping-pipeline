@@ -15,6 +15,32 @@ USER_AGENT = (
     "books_pipeline/1.0 (Enterprise Web Scraping Pipeline; educational project)"
 )
 
+FEEDS = {
+    "books.json": {
+        "format": "json",
+        "encoding": "utf-8",
+        "indent": 2,
+        "overwrite": True,
+    },
+    "books.csv": {
+        "format": "csv",
+        "encoding": "utf-8",
+        "overwrite": True,
+        "fields": ["title", "price", "availability", "product_url", "image_url", "category"],
+    },
+    "books.xml": {
+        "format": "xml",
+        "encoding": "utf-8",
+        "indent": 2,
+        "overwrite": True,
+        "item_element": "book",
+        "root_element": "books",
+    },
+}
+
+
+
+
 ROBOTSTXT_OBEY = True
 
 # Politeness 
